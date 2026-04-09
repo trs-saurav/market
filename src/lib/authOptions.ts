@@ -1,8 +1,7 @@
 import CredentialsProvider from "next-auth/providers/credentials";
-import connectToDatabase from "@/lib/db";
-import User from "@/models/User";
-import bcrypt from "bcryptjs";
 import type { NextAuthOptions } from "next-auth";
+
+const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -10,44 +9,43 @@ export const authOptions: NextAuthOptions = {
       name: "Credentials",
       credentials: {
         email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" }
+        password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        await connectToDatabase();
         if (!credentials?.email || !credentials?.password) {
           throw new Error("Missing email or password");
         }
-        const user = await User.findOne({ email: credentials.email }).select("+password");
-        if (!user) {
-          throw new Error("Invalid email or password");
+
+        // Delegate credential verification to the Python backend
+        const res = await fetch(`${PYTHON_API}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: credentials.email,
+            password: credentials.password,
+          }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.detail ?? "Invalid email or password");
         }
-        const isMatch = await bcrypt.compare(credentials.password, user.password);
-        if (!isMatch) {
-          throw new Error("Invalid email or password");
-        }
-        return { id: user._id.toString(), email: user.email, name: user.name };
-      }
-    })
+
+        return res.json(); // { id, email, name }
+      },
+    }),
   ],
-  session: {
-    strategy: "jwt",
-  },
+  session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
-  pages: {
-    signIn: "/login",
-  },
+  pages: { signIn: "/login" },
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-      }
+      if (user) token.id = (user as any).id;
       return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        (session.user as any).id = token.id;
-      }
+      if (session.user) (session.user as any).id = token.id;
       return session;
-    }
-  }
+    },
+  },
 };

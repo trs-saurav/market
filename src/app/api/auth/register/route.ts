@@ -1,32 +1,33 @@
 import { NextResponse } from "next/server";
-import connectToDatabase from "@/lib/db";
-import User from "@/models/User";
-import bcrypt from "bcryptjs";
+
+const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 
 export async function POST(request: Request) {
   try {
-    const { email, password, name } = await request.json();
+    const body = await request.json();
+    const { email, password, name } = body;
 
     if (!email || !password || !name) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
 
-    await connectToDatabase();
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return NextResponse.json({ error: "Email already exists" }, { status: 400 });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = await User.create({
-      email,
-      name,
-      password: hashedPassword,
+    // Forward to Python backend
+    const res = await fetch(`${PYTHON_API}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, name }),
     });
 
-    return NextResponse.json({ message: "User registered successfully", id: newUser._id }, { status: 201 });
+    const data = await res.json();
+
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: data?.detail ?? "Registration failed" },
+        { status: res.status }
+      );
+    }
+
+    return NextResponse.json(data, { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
